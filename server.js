@@ -1,13 +1,65 @@
 const express = require('express');
 const app = express();
-const port = 3000;
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+
+const PORT = process.env.PORT || 3000;
+const HISTORY_FILE = './history.json';
+
+// --- DATABASE LOGIC (JSON PERSISTENCE) ---
+function loadHistory() {
+    try {
+        if (fs.existsSync(HISTORY_FILE)) {
+            return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+        }
+    } catch (err) { console.error("History load error:", err); }
+    return [];
+}
+
+function saveHistory(logs) {
+    try {
+        fs.writeFileSync(HISTORY_FILE, JSON.stringify(logs, null, 2));
+    } catch (err) { console.error("History save error:", err); }
+}
+
+let systemLogs = loadHistory();
+
+// --- STORAGE CONFIGURATION ---
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, './'),
+    filename: (req, file, cb) => cb(null, file.originalname)
+});
+const upload = multer({ storage: storage });
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(__dirname));
 
-let savedLink = ""; 
-let history = []; 
+function getTimestamp() {
+    const now = new Date();
+    return now.toLocaleDateString('en-GB') + ' ' + now.toLocaleTimeString('en-GB');
+}
 
+// --- HTML SHARED STYLES ---
+const commonStyles = `
+    :root {
+        --accent: #8a2be2;
+        --accent-light: #00d4ff;
+        --bg: #020203;
+        --glass: rgba(255, 255, 255, 0.03);
+        --glass-border: rgba(255, 255, 255, 0.07);
+        --text: #ffffff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; scroll-behavior: smooth; }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; overflow-x: hidden; }
+    .bg-glow { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle at 50% -10%, #1a0b2e 0%, transparent 40%); z-index: -1; }
+    nav { padding: 20px 10%; display: flex; justify-content: space-between; align-items: center; backdrop-filter: blur(15px); border-bottom: 1px solid var(--glass-border); position: fixed; top: 0; width: 100%; z-index: 1000; }
+    .logo { font-weight: 800; font-size: 1.5rem; text-decoration: none; color: #fff; letter-spacing: -1px; }
+    .logo span { color: var(--accent-light); }
+    .glass-card { background: var(--glass); border: 1px solid var(--glass-border); border-radius: 25px; padding: 35px; backdrop-filter: blur(10px); }
+`;
+
+// --- ROUTE: MAIN PAGE ---
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
@@ -15,195 +67,99 @@ app.get('/', (req, res) => {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Car Project | Enterprise Portal</title>
-            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+            <title>DriTh | Engineering Portal</title>
+            <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
             <style>
-                :root {
-                    --bg: #050508;
-                    --primary: #8a2be2;
-                    --secondary: #00d4ff;
-                    --card-bg: #0f101a;
-                    --text: #ffffff;
-                }
-
-                * { scroll-behavior: smooth; box-sizing: border-box; }
-                body { margin: 0; padding: 0; background-color: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; line-height: 1.6; overflow-x: hidden; }
-
-                /* --- NAVIGATION --- */
-                nav {
-                    display: flex; justify-content: space-between; align-items: center;
-                    padding: 20px 8%; background: rgba(5, 5, 8, 0.9);
-                    backdrop-filter: blur(15px); position: fixed; top: 0; width: 100%;
-                    z-index: 1000; border-bottom: 1px solid rgba(255,255,255,0.05);
-                }
-                .logo { font-weight: 800; font-size: 1.5rem; color: #fff; text-decoration: none; }
-                .logo span { color: var(--primary); }
-                .nav-links { display: flex; gap: 30px; list-style: none; margin: 0; padding: 0; }
-                .nav-links a { color: #888; text-decoration: none; font-size: 14px; font-weight: 500; transition: 0.3s; }
-                .nav-links a:hover { color: var(--secondary); }
-
-                /* --- HERO SECTION --- */
-                header {
-                    text-align: center; padding: 160px 20px 100px;
-                    background: radial-gradient(circle at center, rgba(138, 43, 226, 0.15) 0%, transparent 70%);
-                }
-                h1 { font-size: 3.5rem; margin: 0; letter-spacing: -2px; }
-                h1 span { color: var(--secondary); }
-
-                /* --- MAIN CONTENT --- */
-                .container { max-width: 1100px; margin: 0 auto; padding: 40px 20px; }
-                .grid-main { display: grid; grid-template-columns: 1.5fr 1fr; gap: 30px; margin-bottom: 80px; }
-                
-                .card {
-                    background: var(--card-bg); border: 1px solid rgba(255,255,255,0.05);
-                    border-radius: 24px; padding: 40px; position: relative;
-                }
-
-                /* SCP Form */
-                .input-box {
-                    background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);
-                    padding: 10px; border-radius: 12px; display: flex; gap: 10px; margin-top: 20px;
-                }
-                input { background: none; border: none; color: white; flex: 1; outline: none; padding: 10px; font-size: 16px; }
-                .save-btn { background: #fff; color: #000; border: none; padding: 10px 25px; border-radius: 8px; font-weight: 700; cursor: pointer; }
-
-                /* --- COMPACT FLIGHTBOARD BUTTON --- */
-                .flight-card { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-                
-                .flight-btn {
-                    width: 200px; height: 60px;
-                    background: transparent; border: 2px solid var(--primary);
-                    border-radius: 12px; color: white; font-size: 14px;
-                    font-weight: 700; text-transform: uppercase; letter-spacing: 2px;
-                    cursor: pointer; transition: 0.4s; margin-top: 15px;
-                }
-                .flight-btn:hover { background: var(--primary); box-shadow: 0 0 30px rgba(138, 43, 226, 0.4); transform: translateY(-2px); }
-
-                /* --- SECTIONS --- */
-                section { padding: 100px 0; border-top: 1px solid rgba(255,255,255,0.05); }
-                .section-title { font-size: 2rem; margin-bottom: 40px; color: var(--secondary); font-weight: 800; }
-
-                /* Features */
-                .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-                .f-item { background: rgba(255,255,255,0.02); padding: 30px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.05); }
-
-                /* Project Status Bar */
-                .progress-container { background: #1a1a2e; height: 10px; border-radius: 5px; margin: 20px 0; overflow: hidden; }
-                .progress-bar { width: 75%; height: 100%; background: linear-gradient(90deg, var(--primary), var(--secondary)); }
-
-                /* History */
-                .history-list { list-style: none; padding: 0; margin: 0; }
-                .history-item { 
-                    padding: 15px; border-bottom: 1px solid rgba(255,255,255,0.05); 
-                    display: flex; justify-content: space-between; font-size: 14px;
-                }
-                .history-item span { color: #555; font-family: monospace; }
-
-                footer { text-align: center; padding: 50px; color: #444; font-size: 12px; border-top: 1px solid rgba(255,255,255,0.05); }
-
+                ${commonStyles}
+                header { padding: 160px 10% 60px; text-align: center; }
+                header h1 { font-size: 4rem; font-weight: 800; letter-spacing: -2px; }
+                header h1 span { color: var(--accent-light); }
+                .container { max-width: 1200px; margin: 0 auto; padding: 20px; display: grid; grid-template-columns: 2fr 1fr; gap: 30px; }
+                .upload-box { border: 2px dashed rgba(255,255,255,0.05); border-radius: 20px; padding: 40px; text-align: center; cursor: pointer; transition: 0.3s; }
+                .upload-box:hover { border-color: var(--accent); background: rgba(138, 43, 226, 0.05); }
+                .search-group { display: flex; gap: 10px; margin-top: 20px; }
+                input { flex: 1; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); padding: 18px; border-radius: 15px; color: #fff; outline: none; }
+                .btn-launch { background: var(--accent); color: #fff; border: none; padding: 0 35px; border-radius: 15px; font-weight: 800; cursor: pointer; text-transform: uppercase; }
+                .history-feed { max-height: 500px; overflow-y: auto; }
+                .history-item { padding: 15px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+                .history-item a { color: var(--accent-light); text-decoration: none; font-weight: 600; font-size: 0.9rem; display: block; }
+                .history-item small { font-family: 'JetBrains Mono'; color: #444; font-size: 0.7rem; }
+                .asset-row { display: flex; justify-content: space-between; align-items: center; padding: 20px; background: rgba(255,255,255,0.02); border-radius: 15px; border: 1px solid var(--glass-border); margin-top: 10px; }
             </style>
         </head>
         <body>
-
-            <nav>
-                <a href="#" class="logo">Dri<span>Th.</span></a>
-                <ul class="nav-links">
-                    <li><a href="#home">Home</a></li>
-                    <li><a href="#features">Features</a></li>
-                    <li><a href="#project">Project</a></li>
-                    <li><a href="#history">History</a></li>
-                </ul>
-                <div style="font-size: 10px; color: var(--primary); font-weight: bold; letter-spacing: 1px;">● SYSTEM ONLINE</div>
-            </nav>
-
-            <header id="home">
-                <h1>Innovating Tomorrow. <br><span>Building Today.</span></h1>
-                <p style="color: #666; max-width: 600px; margin: 20px auto; font-size: 1.1rem;">Manage your car design assets and launch your development environment with precision control.</p>
-            </header>
-
+            <div class="bg-glow"></div>
+            <nav><a href="/" class="logo">Dri<span>Th.</span></a></nav>
+            <header><h1>Engineering <span>Systems.</span></h1></header>
             <div class="container">
-                <div class="grid-main">
-                    <div class="card">
-                        <h2 style="margin:0; font-size:1.5rem;">System Control Panel</h2>
-                        <p style="color: #666; font-size:14px; margin-bottom: 20px;">Define target path for the Flightboard module.</p>
-                        <form action="/save" method="POST">
-                            <div class="input-box">
-                                <input type="text" name="projectUrl" value="${savedLink}" placeholder="URL or filename (e.g. mycar.html)">
-                                <button type="submit" class="save-btn">SAVE</button>
-                            </div>
+                <div class="main-side">
+                    <section class="glass-card" style="margin-bottom: 30px;">
+                        <h2 style="font-size:0.7rem; letter-spacing:3px; color:var(--accent-light); margin-bottom:20px;">01 // DEPLOYMENT</h2>
+                        <form action="/upload" method="POST" enctype="multipart/form-data" id="upForm">
+                            <label class="upload-box">
+                                <input type="file" name="myFile" style="display:none" onchange="document.getElementById('upForm').submit()">
+                                <p style="font-weight:800;">CLICK TO DEPLOY NEW ASSET</p>
+                            </label>
                         </form>
-                    </div>
-
-                    <div class="card flight-card">
-                        <h2 style="margin:0; font-size:1.2rem;">Execution</h2>
-                        <button class="flight-btn" onclick="launch()">Flightboard</button>
-                        <div style="margin-top: 15px; font-size: 12px; color: ${savedLink ? 'var(--secondary)' : '#ff3300'}">
-                            STATUS: ${savedLink ? 'READY' : 'OFFLINE'}
+                    </section>
+                    <section id="asset-sec" class="glass-card">
+                        <h2 style="font-size:0.7rem; letter-spacing:3px; color:var(--accent-light); margin-bottom:20px;">02 // FLIGHTBOARD</h2>
+                        <div class="search-group">
+                            <input type="text" id="targetInput" placeholder="Enter .zip name or URL...">
+                            <button class="btn-launch" onclick="exploreAssets()">Launch</button>
                         </div>
-                    </div>
+                        <div id="results" style="display:none; margin-top:30px;">
+                            <div id="asset-list"></div>
+                        </div>
+                    </section>
                 </div>
-
-                <section id="features">
-                    <h2 class="section-title">Core Features</h2>
-                    <div class="features-grid">
-                        <div class="f-item">
-                            <h3 style="color: var(--secondary)">Instant Sync</h3>
-                            <p style="color: #888">Connect your SCP input to the Flightboard relay in real-time.</p>
+                <div class="side-bar">
+                    <section id="history-sec" class="glass-card">
+                        <h2 style="font-size:0.7rem; letter-spacing:3px; color:var(--accent-light); margin-bottom:20px;">GLOBAL HISTORY</h2>
+                        <div class="history-feed">
+                            ${systemLogs.map(log => `
+                                <div class="history-item">
+                                    <a href="${log.url}" target="_blank">${log.label}</a>
+                                    <small>${log.time}</small>
+                                </div>
+                            `).reverse().join('')}
                         </div>
-                        <div class="f-item">
-                            <h3 style="color: var(--primary)">Hybrid Support</h3>
-                            <p style="color: #888">Open both web URLs and local .html assets flawlessly.</p>
-                        </div>
-                        <div class="f-item">
-                            <h3 style="color: #fff">Smart Redirect</h3>
-                            <p style="color: #888">Automatic protocol detection for non-http entries.</p>
-                        </div>
-                    </div>
-                </section>
-
-                <section id="project">
-                    <h2 class="section-title">Project: Neon Drifter v1</h2>
-                    <div class="card" style="background: rgba(0,212,255,0.01)">
-                        <div style="display: flex; justify-content: space-between; font-weight: bold;">
-                            <span>Design Completion</span>
-                            <span style="color: var(--secondary)">75%</span>
-                        </div>
-                        <div class="progress-container">
-                            <div class="progress-bar"></div>
-                        </div>
-                        <p style="color: #666; font-size: 14px;">Current Stage: Aerodynamics & Shaders Optimization.</p>
-                    </div>
-                </section>
-
-                <section id="history">
-                    <h2 class="section-title">Session History</h2>
-                    <div class="card" style="padding: 20px;">
-                        <ul class="history-list">
-                            ${history.length > 0 ? history.map(item => `
-                                <li class="history-item">
-                                    ${item.url} <span style="color: #444;">${item.time}</span>
-                                </li>
-                            `).join('') : '<li class="history-item">No records found.</li>'}
-                        </ul>
-                    </div>
-                </section>
+                    </section>
+                </div>
             </div>
-
-            <footer>
-                &copy; 2026 Car Project OS. Professional Assets Management System.
-            </footer>
-
             <script>
-                function launch() {
-                    let link = "${savedLink}";
-                    if (!link) return alert("System Error: No target link found!");
+                async function exploreAssets() {
+                    const target = document.getElementById('targetInput').value;
+                    if(!target) return;
+                    await fetch('/log-access?target=' + encodeURIComponent(target));
                     
-                    if (!link.startsWith('http') && !link.startsWith('www')) {
-                        link = window.location.origin + '/' + link;
-                    } else if (link.startsWith('www')) {
-                        link = 'https://' + link;
+                    if (target.startsWith('http')) {
+                        window.open(target, '_blank');
+                        setTimeout(() => location.reload(), 500);
+                        return;
                     }
-                    window.open(link, '_blank');
+
+                    if (target.endsWith('.zip')) {
+                        window.location.href = '/explorer?file=' + encodeURIComponent(target);
+                        return;
+                    }
+
+                    const res = await fetch('/explore?path=' + encodeURIComponent(target));
+                    const data = await res.json();
+                    const list = document.getElementById('asset-list');
+                    list.innerHTML = "";
+                    data.forEach(file => {
+                        list.innerHTML += \`
+                            <div class="asset-row">
+                                <strong>📦 \${file}</strong>
+                                <a href="/\${file.endsWith('.zip') ? 'explorer?file='+file : file}" 
+                                   style="color:#000; background:#fff; padding:8px 15px; border-radius:8px; text-decoration:none; font-weight:800; font-size:10px;">
+                                   \${file.endsWith('.zip') ? 'SCAN' : 'OPEN'}
+                                </a>
+                            </div>
+                        \`;
+                    });
+                    document.getElementById('results').style.display='block';
                 }
             </script>
         </body>
@@ -211,15 +167,78 @@ app.get('/', (req, res) => {
     `);
 });
 
-app.post('/save', (req, res) => {
-    const url = req.body.projectUrl;
-    if (url) {
-        savedLink = url;
-        const time = new Date().toLocaleTimeString();
-        history.unshift({ url, time });
-        if (history.length > 5) history.pop();
+// --- ROUTE: DEEP EXPLORER PAGE ---
+app.get('/explorer', (req, res) => {
+    res.send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <title>DriTh | Deep Scan</title>
+            <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+            <style>
+                ${commonStyles}
+                .container { max-width: 800px; margin: 150px auto; }
+                .file-name { font-family: 'JetBrains Mono'; color: var(--accent-light); font-size: 1.5rem; margin: 10px 0 30px; }
+                .content-list { background: rgba(0,0,0,0.5); padding: 30px; border-radius: 20px; border-left: 4px solid var(--accent); }
+                .file-item { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-family: 'JetBrains Mono'; font-size: 13px; color: #888; }
+            </style>
+        </head>
+        <body>
+            <div class="bg-glow"></div>
+            <nav><a href="/" class="logo">Dri<span>Th.</span></a></nav>
+            <div class="container">
+                <div class="glass-card">
+                    <h2 style="font-size:0.7rem; letter-spacing:3px; color:var(--accent-light);">ARCHIVE DEEP SCAN</h2>
+                    <div id="targetName" class="file-name">Loading...</div>
+                    <div id="fileContent" class="content-list">Decrypting archive layers...</div>
+                    <a href="/" style="display:inline-block; margin-top:30px; color:#444; text-decoration:none; font-size:0.8rem; font-weight:800;">← BACK TO TERMINAL</a>
+                </div>
+            </div>
+            <script>
+                async function initScan() {
+                    const params = new URLSearchParams(window.location.search);
+                    const file = params.get('file');
+                    document.getElementById('targetName').innerText = file || "No file selected";
+                    try {
+                        const res = await fetch('/' + file);
+                        const zip = await JSZip.loadAsync(await res.blob());
+                        let html = "";
+                        zip.forEach(p => html += '<div class="file-item">> ' + p + '</div>');
+                        document.getElementById('fileContent').innerHTML = html || "Archive is empty.";
+                    } catch (e) { document.getElementById('fileContent').innerText = "Error accessing asset."; }
+                }
+                initScan();
+            </script>
+        </body>
+        </html>
+    `);
+});
+
+// --- API ENDPOINTS ---
+app.get('/log-access', (req, res) => {
+    const target = req.query.target;
+    systemLogs.push({ label: "RELAY: " + target, url: target.startsWith('http') ? target : "#", time: getTimestamp() });
+    if (systemLogs.length > 100) systemLogs.shift();
+    saveHistory(systemLogs);
+    res.sendStatus(200);
+});
+
+app.post('/upload', upload.single('myFile'), (req, res) => {
+    if (req.file) {
+        systemLogs.push({ label: "DEPLOY: " + req.file.originalname, url: "/explorer?file=" + req.file.originalname, time: getTimestamp() });
+        saveHistory(systemLogs);
     }
     res.redirect('/');
 });
 
-app.listen(port, () => console.log("Enterprise Portal live at http://localhost:3000"));
+app.get('/explore', (req, res) => {
+    fs.readdir(path.join(__dirname), (err, files) => {
+        if (err) return res.json([]);
+        const t = req.query.path.toLowerCase();
+        res.json(files.filter(f => (f.endsWith('.html') || f.endsWith('.zip')) && !['package.json', 'server.js', 'history.json'].includes(f) && (t === '/' || f.toLowerCase().includes(t))));
+    });
+});
+
+app.listen(PORT, () => console.log("DriTh Engineering Portal Active"));
